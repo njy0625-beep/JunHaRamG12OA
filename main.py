@@ -63,35 +63,75 @@ with col3:
 selected_row = dong_df[dong_df['동'] == selected_dong].iloc[0]
 
 # -----------------------------------------------------------------------------
-# 5. 나이 라벨 순서 구성 및 데이터 정형화
+# 5. 나이 라벨 순서 구성 및 통계 지표 계산 (평균연령, 고령화율 등)
 # -----------------------------------------------------------------------------
 # 0세부터 99세, 그리고 '100세 이상' 라벨 목록 생성
 expected_ages = [f"{i}세" for i in range(100)] + ["100세 이상", "100세이상"]
 
-# 실제 데이터프레임에 존재하는 나이 열만 0세부터 순서대로 수집
 age_labels = []
+numeric_ages = []
+
 for age in expected_ages:
     if f"남_{age}" in df.columns and f"여_{age}" in df.columns:
         age_labels.append(age)
+        # 평균연령 계산용 숫자 값 변환 (100세 이상은 100으로 간주)
+        if age in ["100세 이상", "100세이상"]:
+            numeric_ages.append(100)
+        else:
+            numeric_ages.append(int(age.replace("세", "")))
 
-# 남성/여성 인구수 리스트 생성
-# 남성은 피라미드 왼쪽에 배치하기 위해 음수(-) 값으로 변환
+# 남성/여성 인구수 리스트 생성 (남성은 왼쪽 배치를 위해 음수 변환)
 male_pop = [int(selected_row[f"남_{age}"]) for age in age_labels]
 female_pop = [int(selected_row[f"여_{age}"]) for age in age_labels]
 male_pop_neg = [-val for val in male_pop]
 
-# 요약 정보 계산 (총 인구, 남성/여성 인구)
+# 지표 계산
 total_m = sum(male_pop)
 total_f = sum(female_pop)
 total_pop = total_m + total_f
 
+if total_pop > 0:
+    # 1. 평균연령 (나이 x 인구수 총합 / 총인구)
+    total_age_sum = sum(age_num * (m + f) for age_num, m, f in zip(numeric_ages, male_pop, female_pop))
+    avg_age = total_age_sum / total_pop
+
+    # 2. 고령인구 (65세 이상) 및 고령화율 (%)
+    elderly_pop = sum(m + f for age_num, m, f in zip(numeric_ages, male_pop, female_pop) if age_num >= 65)
+    aging_rate = (elderly_pop / total_pop) * 100
+
+    # 3. 유소년인구 (0~14세) 및 비율 (%)
+    youth_pop = sum(m + f for age_num, m, f in zip(numeric_ages, male_pop, female_pop) if age_num <= 14)
+    youth_rate = (youth_pop / total_pop) * 100
+else:
+    avg_age = 0.0
+    aging_rate = 0.0
+    youth_rate = 0.0
+
 # -----------------------------------------------------------------------------
-# 6. 주요 요약 지표 (카드 형태)
+# 6. 주요 요약 지표 카드 3개 (총인구, 평균연령, 고령화율)
 # -----------------------------------------------------------------------------
 m_col1, m_col2, m_col3 = st.columns(3)
-m_col1.metric("총 인구수", f"{total_pop:,} 명")
-m_col2.metric("남성 인구", f"{total_m:,} 명")
-m_col3.metric("여성 인구", f"{total_f:,} 명")
+
+with m_col1:
+    st.metric(label="👥 총인구", value=f"{total_pop:,} 명")
+
+with m_col2:
+    st.metric(label="🎂 평균연령", value=f"{avg_age:.1f} 세")
+
+with m_col3:
+    # 고령화율이 20% 이상인 초고령사회 지역이면 ⚠️/🚨 주의 표시 추가
+    if aging_rate >= 20.0:
+        st.metric(
+            label="👵 고령화율 (65세 이상) ⚠️",
+            value=f"{aging_rate:.1f} %",
+            delta="초고령사회 (20% 초과) 🚨",
+            delta_color="inverse"
+        )
+    else:
+        st.metric(
+            label="👵 고령화율 (65세 이상)",
+            value=f"{aging_rate:.1f} %"
+        )
 
 st.write("")
 
@@ -108,7 +148,7 @@ fig.add_trace(go.Bar(
     orientation='h',
     hoverinfo='text',
     hovertext=[f"<b>{age} 남성</b>: {val:,}명" for age, val in zip(age_labels, male_pop)],
-    marker=dict(color='#5B9BD5')  # 따뜻하고 부드러운 블루
+    marker=dict(color='#5B9BD5')  # 따뜻한 파란색
 ))
 
 # 여성 막대 그래프 (오른쪽 - 양수 값)
@@ -119,16 +159,16 @@ fig.add_trace(go.Bar(
     orientation='h',
     hoverinfo='text',
     hovertext=[f"<b>{age} 여성</b>: {val:,}명" for age, val in zip(age_labels, female_pop)],
-    marker=dict(color='#ED7D31')  # 따뜻한 핑크/코랄
+    marker=dict(color='#ED7D31')  # 따뜻한 주황/코랄색
 ))
 
-# X축 눈금에 음수가 아닌 절댓값이 표시되도록 설정
+# X축 눈금 설정 (음수가 아닌 절댓값으로 표시)
 max_val = max(max(male_pop), max(female_pop)) if total_pop > 0 else 100
 step = max(1, int(max_val / 4))
 tick_vals = list(range(-max_val, max_val + step, step))
 tick_text = [f"{abs(v):,}" for v in tick_vals]
 
-# 레이아웃 및 세로축 고정 설정
+# 레이아웃 및 세로축 순서 고정 설정
 fig.update_layout(
     title=dict(
         text=f"<b>{selected_sido} {selected_sigungu} {selected_dong}</b> 인구 피라미드",
@@ -151,31 +191,9 @@ fig.update_layout(
         title="나이",
         type='category',
         categoryorder='array',
-        categoryarray=age_labels,  # 0세 -> 100세 이상 순서 배열 입력
+        categoryarray=age_labels,  # 0세 -> 100세 이상 순서 배열 지정
         showgrid=True,
         gridcolor='#F0F0F0'
     ),
     legend=dict(
         orientation="h",
-        yanchor="bottom",
-        y=1.02,
-        xanchor="right",
-        x=1
-    ),
-    height=800,
-    template='plotly_white',
-    margin=dict(l=60, r=60, t=80, b=60)
-)
-
-# 스트림릿 화면에 차트 출력
-st.plotly_chart(fig, use_container_width=True)
-
-# -----------------------------------------------------------------------------
-# 8. 원본 데이터 확인용 접기/펼치기 영역
-# -----------------------------------------------------------------------------
-with st.expander("📋 선택한 동네 상세 데이터 보기"):
-    st.dataframe(pd.DataFrame({
-        '나이': age_labels,
-        '남성 인구(명)': male_pop,
-        '여성 인구(명)': female_pop
-    }))
